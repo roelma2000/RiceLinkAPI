@@ -1,0 +1,376 @@
+﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using RiceLinkAPI.Models;
+using RiceLinkAPI.Models.Orders;
+using System;
+using System.Linq;
+using System.Threading.Tasks;
+
+namespace RiceLinkAPI.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    public class OrderController : ControllerBase
+    {
+        private readonly AppDbContext _context;
+
+        public OrderController(AppDbContext context)
+        {
+            _context = context;
+        }
+
+        // GET: api/Orders
+        [HttpGet]
+        [Route("~/api/Orders")]
+        public async Task<ActionResult<IEnumerable<OrderDto>>> GetOrders()
+        {
+            var orders = await _context.Orders
+                .Include(o => o.Items)
+                .ToListAsync();
+
+            var orderDtos = orders.Select(o => new OrderDto
+            {
+                OrderId = o.OrderId,
+                OrderDate = o.OrderDate,
+                Status = o.Status,
+                TotalPrice = o.TotalPrice,
+                Items = o.Items.Select(i => new OrderItemDto
+                {
+                    ProductId = i.ProductId,
+                    Quantity = i.Quantity,
+                    UnitPrice = i.UnitPrice
+                }).ToList()
+            }).ToList();
+
+            return Ok(orderDtos);
+        }
+
+        // GET: api/Order?orderId=5001
+        [HttpGet("")]
+        public async Task<ActionResult<OrderDto>> GetOrder([FromQuery(Name = "orderId")] int id)
+        {
+            var order = await _context.Orders
+                .Include(o => o.Items)
+                .FirstOrDefaultAsync(o => o.OrderId == id);
+
+            if (order == null)
+            {
+                return NotFound("Order not found");
+            }
+
+            // Map the Order entity to OrderDto
+            var orderDto = new OrderDto
+            {
+                OrderId = order.OrderId,
+                OrderDate = order.OrderDate,
+                Status = order.Status,
+                TotalPrice = order.TotalPrice,
+                Items = order.Items.Select(i => new OrderItemDto
+                {
+                    ProductId = i.ProductId,
+                    Quantity = i.Quantity,
+                    UnitPrice = i.UnitPrice
+                }).ToList()
+            };
+
+            return Ok(orderDto);
+        }
+
+
+        [HttpPost]
+        public async Task<ActionResult<OrderDto>> CreateOrder([FromBody] OrderModel orderModel)
+        {
+            using (var transaction = await _context.Database.BeginTransactionAsync())
+            {
+                try
+                {
+                    foreach (var item in orderModel.Items)
+                    {
+                        var product = await _context.Products
+                            .Where(p => p.Id == item.ProductId)
+                            .FirstOrDefaultAsync();
+
+                        if (product == null)
+                        {
+                            throw new InvalidOperationException($"ProductId {item.ProductId} not found.");
+                        }
+
+                        if (item.Quantity > product.Quantity)
+                        {
+                            throw new InvalidOperationException($"Insufficient quantity for ProductId {item.ProductId}. Available quantity: {product.Quantity}.");
+                        }
+
+                        // Deduct the quantity from the product
+                        product.Quantity -= item.Quantity;
+                    }
+
+                    var newOrder = new Order
+                    {
+                        OrderDate = orderModel.OrderDate,
+                        Status = "Pending",
+                        Items = orderModel.Items.Select(i => new OrderItem
+                        {
+                            ProductId = i.ProductId,
+                            Quantity = i.Quantity,
+                            UnitPrice = _context.Products.Find(i.ProductId).Price
+                        }).ToList()
+                    };
+
+                    newOrder.TotalPrice = newOrder.Items.Sum(i => i.UnitPrice * i.Quantity);
+
+                    _context.Orders.Add(newOrder);
+                    await _context.SaveChangesAsync();
+
+                    // Map the newly created Order entity to OrderDto
+                    var orderDto = new OrderDto
+                    {
+                        OrderId = newOrder.OrderId,
+                        OrderDate = newOrder.OrderDate,
+                        Status = newOrder.Status,
+                        TotalPrice = newOrder.TotalPrice,
+                        Items = newOrder.Items.Select(i => new OrderItemDto
+                        {
+                            ProductId = i.ProductId,
+                            Quantity = i.Quantity,
+                            UnitPrice = i.UnitPrice
+                        }).ToList()
+                    };
+
+                    await transaction.CommitAsync();
+
+                    return CreatedAtAction(nameof(GetOrder), new { id = orderDto.OrderId }, orderDto);
+                }
+                catch (Exception ex)
+                {
+                    await transaction.RollbackAsync();
+                    return BadRequest(ex.Message);
+                }
+            }
+        }
+
+
+
+
+        // PUT: api/Order
+        [HttpPut]
+        public async Task<ActionResult<OrderDto>> UpdateOrder([FromBody] UpdateOrderModel orderModel)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest("JSON Format Error");
+            }
+
+            using (var transaction = await _context.Database.BeginTransactionAsync())
+            {
+                try
+                {
+                    var order = await _context.Orders
+                        .Include(o => o.Items)
+                        .FirstOrDefaultAsync(o => o.OrderId == orderModel.OrderId);
+
+                    if (order == null)
+                    {
+                        return NotFound("Order not found");
+                    }
+
+                    // Update editable fields
+                    order.OrderDate = orderModel.OrderDate;
+                    order.Status = orderModel.Status;
+
+                    // Process each item; only update quantity
+                    foreach (var item in orderModel.Items)
+                    {
+                        var orderItem = order.Items.FirstOrDefault(i => i.ProductId == item.ProductId);
+                        if (orderItem != null)
+                        {
+                            int quantityChange = item.Quantity - orderItem.Quantity;
+
+                            // Adjust product quantity based on the change in order item quantity
+                            var product = await _context.Products.FindAsync(orderItem.ProductId);
+                            if (product != null && product.Quantity < quantityChange)
+                            {
+                                throw new InvalidOperationException($"Insufficient stock for ProductId {orderItem.ProductId}.");
+                            }
+
+                            product.Quantity -= quantityChange;
+                            orderItem.Quantity = item.Quantity; // Only quantity is updated
+                                                                // Note: UnitPrice and ProductId are not updated
+                        }
+                    }
+
+                    // Recalculate total price
+                    order.TotalPrice = order.Items.Sum(i => i.UnitPrice * i.Quantity);
+
+                    await _context.SaveChangesAsync();
+                    await transaction.CommitAsync();
+
+                    // Map to DTO
+                    var orderDto = new OrderDto
+                    {
+                        OrderId = order.OrderId,
+                        OrderDate = order.OrderDate,
+                        Status = order.Status,
+                        TotalPrice = order.TotalPrice,
+                        Items = order.Items.Select(i => new OrderItemDto
+                        {
+                            ProductId = i.ProductId,
+                            Quantity = i.Quantity,
+                            UnitPrice = i.UnitPrice
+                        }).ToList()
+                    };
+
+                    return Ok(orderDto);
+                }
+                catch (Exception ex)
+                {
+                    await transaction.RollbackAsync();
+                    return BadRequest(ex.Message);
+                }
+            }
+        }
+
+
+
+
+        // PATCH: api/Order
+        [HttpPatch]
+        public async Task<ActionResult<OrderDto>> PatchOrder([FromBody] PatchOrderModel patchOrderModel)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest("JSON Format Error");
+            }
+
+            using (var transaction = await _context.Database.BeginTransactionAsync())
+            {
+                try
+                {
+                    var order = await _context.Orders
+                        .Include(o => o.Items)
+                        .FirstOrDefaultAsync(o => o.OrderId == patchOrderModel.OrderId);
+
+                    if (order == null)
+                    {
+                        return NotFound("Order not found");
+                    }
+
+                    // Update fields if provided
+                    if (patchOrderModel.OrderDate.HasValue)
+                        order.OrderDate = patchOrderModel.OrderDate.Value;
+
+                    if (patchOrderModel.Status != null)
+                        order.Status = patchOrderModel.Status;
+
+                    // Note: TotalPrice is calculated based on item quantities, not directly updated
+
+                    bool quantityUpdated = false;
+
+                    // Check if any item in the order is being updated
+                    if (patchOrderModel.Items != null && patchOrderModel.Items.Count > 0)
+                    {
+                        foreach (var patchItem in patchOrderModel.Items)
+                        {
+                            var orderItem = order.Items.FirstOrDefault(i => i.ProductId == patchItem.ProductId);
+                            if (orderItem != null)
+                            {
+                                var product = await _context.Products.FindAsync(patchItem.ProductId);
+                                if (product != null)
+                                {
+                                    int quantityChange = patchItem.Quantity - orderItem.Quantity;
+                                    if (product.Quantity < quantityChange)
+                                    {
+                                        throw new InvalidOperationException($"Insufficient stock for ProductId {patchItem.ProductId}.");
+                                    }
+                                    product.Quantity -= quantityChange;
+                                }
+
+                                orderItem.Quantity = patchItem.Quantity;
+                                quantityUpdated = true;
+                            }
+                        }
+                    }
+
+                    // Recalculate TotalPrice if quantity is updated
+                    if (quantityUpdated)
+                    {
+                        order.TotalPrice = order.Items.Sum(i => i.UnitPrice * i.Quantity);
+                    }
+
+                    await _context.SaveChangesAsync();
+
+                    // Map the updated Order entity to OrderDto
+                    var orderDto = new OrderDto
+                    {
+                        OrderId = order.OrderId,
+                        OrderDate = order.OrderDate,
+                        Status = order.Status,
+                        TotalPrice = order.TotalPrice,
+                        Items = order.Items.Select(i => new OrderItemDto
+                        {
+                            ProductId = i.ProductId,
+                            Quantity = i.Quantity,
+                            UnitPrice = i.UnitPrice
+                        }).ToList()
+                    };
+
+                    await transaction.CommitAsync();
+
+                    return Ok(orderDto);
+                }
+                catch (Exception ex)
+                {
+                    await transaction.RollbackAsync();
+                    return BadRequest(ex.Message);
+                }
+            }
+        }
+
+
+        // DELETE: api/Order?orderId=5001
+        [HttpDelete]
+        public async Task<ActionResult> DeleteOrder([FromQuery] int id)
+        {
+            using (var transaction = await _context.Database.BeginTransactionAsync())
+            {
+                try
+                {
+                    var order = await _context.Orders
+                        .Include(o => o.Items)
+                        .FirstOrDefaultAsync(o => o.OrderId == id);
+
+                    if (order == null)
+                    {
+                        return NotFound("Order not found");
+                    }
+
+                    if (order.Status == "Pending")
+                    {
+                        // Revert the product quantities
+                        foreach (var item in order.Items)
+                        {
+                            var product = await _context.Products.FindAsync(item.ProductId);
+                            if (product != null)
+                            {
+                                product.Quantity += item.Quantity;
+                            }
+                        }
+                    }
+
+                    _context.Orders.Remove(order);
+                    await _context.SaveChangesAsync();
+                    await transaction.CommitAsync();
+
+                    // Return a simple confirmation message or the ID of the deleted order
+                    return Ok(new { message = $"Order with ID {id} has been deleted." });
+                }
+                catch (Exception ex)
+                {
+                    await transaction.RollbackAsync();
+                    return BadRequest(ex.Message);
+                }
+            }
+        }
+
+
+    }//End of Controller 
+}

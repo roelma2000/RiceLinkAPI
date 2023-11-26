@@ -1,3 +1,6 @@
+using Microsoft.EntityFrameworkCore;
+using RiceLinkAPI.Models;
+
 namespace RiceLinkAPI
 {
     public class Program
@@ -5,10 +8,15 @@ namespace RiceLinkAPI
         public static void Main(string[] args)
         {
             var builder = WebApplication.CreateBuilder(args);
+            var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 
             // Add services to the container.
 
-            builder.Services.AddControllers();
+            builder.Services.AddControllers().AddJsonOptions(options =>
+            {
+                options.JsonSerializerOptions.ReferenceHandler = null; // Do not preserve references
+            });
+            builder.Services.AddDbContext<AppDbContext>(options =>options.UseSqlServer(connectionString));
             // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen();

@@ -2,7 +2,7 @@
 
 namespace RiceLinkAPI.Models.Products
 {
-    public class UpsertProductRequest
+    public class PatchProductRequest
     {
         [Required]
         public int? Id { get; set; }
