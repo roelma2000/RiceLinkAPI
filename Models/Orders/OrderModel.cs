@@ -7,6 +7,9 @@ namespace RiceLinkAPI.Models.Orders
     public class OrderModel
     {
         [Required]
+        public int CustomerId { get; set; }
+
+        [Required]
         [DataType(DataType.Date)]
         public DateTime OrderDate { get; set; }
 
@@ -31,6 +34,7 @@ namespace RiceLinkAPI.Models.Orders
     public class OrderDto
     {
         public int OrderId { get; set; }
+        public int CustomerId { get; set; }
         public DateTime OrderDate { get; set; }
         public string Status { get; set; }
         public decimal TotalPrice { get; set; }

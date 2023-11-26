@@ -2,6 +2,7 @@
 using Microsoft.EntityFrameworkCore;
 using RiceLinkAPI.Models;
 using RiceLinkAPI.Models.Orders;
+using RiceLinkAPI.Models.Customer;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
@@ -30,6 +31,7 @@ namespace RiceLinkAPI.Controllers
 
             var orderDtos = orders.Select(o => new OrderDto
             {
+                CustomerId = o.CustomerId,
                 OrderId = o.OrderId,
                 OrderDate = o.OrderDate,
                 Status = o.Status,
@@ -43,7 +45,7 @@ namespace RiceLinkAPI.Controllers
             }).ToList();
 
             return Ok(orderDtos);
-        }
+        }//End GetOrders
 
         // GET: api/Order?orderId=5001
         [HttpGet("")]
@@ -61,6 +63,7 @@ namespace RiceLinkAPI.Controllers
             // Map the Order entity to OrderDto
             var orderDto = new OrderDto
             {
+                CustomerId = order.CustomerId,
                 OrderId = order.OrderId,
                 OrderDate = order.OrderDate,
                 Status = order.Status,
@@ -74,12 +77,19 @@ namespace RiceLinkAPI.Controllers
             };
 
             return Ok(orderDto);
-        }
+        }//End GetOrder
 
-
+        // POST: api/Order
         [HttpPost]
         public async Task<ActionResult<OrderDto>> CreateOrder([FromBody] OrderModel orderModel)
         {
+            // Check if CustomerId is valid
+            var customer = await _context.CustomerModel.FindAsync(orderModel.CustomerId);
+            if (customer == null)
+            {
+                return BadRequest("Invalid CustomerId");
+            }
+
             using (var transaction = await _context.Database.BeginTransactionAsync())
             {
                 try
@@ -106,8 +116,9 @@ namespace RiceLinkAPI.Controllers
 
                     var newOrder = new Order
                     {
+                        CustomerId = orderModel.CustomerId,
                         OrderDate = orderModel.OrderDate,
-                        Status = "Pending",
+                        Status = "Reserved",
                         Items = orderModel.Items.Select(i => new OrderItem
                         {
                             ProductId = i.ProductId,
@@ -146,10 +157,7 @@ namespace RiceLinkAPI.Controllers
                     return BadRequest(ex.Message);
                 }
             }
-        }
-
-
-
+        } //End CreateOrder
 
         // PUT: api/Order
         [HttpPut]
@@ -176,6 +184,12 @@ namespace RiceLinkAPI.Controllers
                     // Update editable fields
                     order.OrderDate = orderModel.OrderDate;
                     order.Status = orderModel.Status;
+
+                    // Change status only if it is "Reserved" or "Completed"
+                    if (orderModel.Status == "Reserved" || orderModel.Status == "Completed")
+                    {
+                        order.Status = orderModel.Status;
+                    }
 
                     // Process each item; only update quantity
                     foreach (var item in orderModel.Items)
@@ -207,6 +221,7 @@ namespace RiceLinkAPI.Controllers
                     // Map to DTO
                     var orderDto = new OrderDto
                     {
+                        CustomerId = order.CustomerId,
                         OrderId = order.OrderId,
                         OrderDate = order.OrderDate,
                         Status = order.Status,
@@ -227,10 +242,7 @@ namespace RiceLinkAPI.Controllers
                     return BadRequest(ex.Message);
                 }
             }
-        }
-
-
-
+        }//End UpdateOrder
 
         // PATCH: api/Order
         [HttpPatch]
@@ -258,8 +270,11 @@ namespace RiceLinkAPI.Controllers
                     if (patchOrderModel.OrderDate.HasValue)
                         order.OrderDate = patchOrderModel.OrderDate.Value;
 
-                    if (patchOrderModel.Status != null)
+                    // Change status only if it is "Reserved" or "Completed"
+                    if (patchOrderModel.Status == "Reserved" || patchOrderModel.Status == "Completed")
+                    {
                         order.Status = patchOrderModel.Status;
+                    }
 
                     // Note: TotalPrice is calculated based on item quantities, not directly updated
 
@@ -301,6 +316,7 @@ namespace RiceLinkAPI.Controllers
                     // Map the updated Order entity to OrderDto
                     var orderDto = new OrderDto
                     {
+                        CustomerId = order.CustomerId,
                         OrderId = order.OrderId,
                         OrderDate = order.OrderDate,
                         Status = order.Status,
@@ -323,8 +339,7 @@ namespace RiceLinkAPI.Controllers
                     return BadRequest(ex.Message);
                 }
             }
-        }
-
+        }//End PatchOrder
 
         // DELETE: api/Order?orderId=5001
         [HttpDelete]
@@ -343,7 +358,7 @@ namespace RiceLinkAPI.Controllers
                         return NotFound("Order not found");
                     }
 
-                    if (order.Status == "Pending")
+                    if (order.Status == "Reserved")
                     {
                         // Revert the product quantities
                         foreach (var item in order.Items)
@@ -369,7 +384,7 @@ namespace RiceLinkAPI.Controllers
                     return BadRequest(ex.Message);
                 }
             }
-        }
+        }//End DeleteOrder
 
 
     }//End of Controller 

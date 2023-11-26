@@ -1,4 +1,5 @@
-﻿using System;
+﻿using RiceLinkAPI.Models.Customer;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
@@ -22,6 +23,13 @@ namespace RiceLinkAPI.Models.Orders
         [Required]
         [Column(TypeName = "decimal(18, 2)")]
         public decimal TotalPrice { get; set; }
+
+        [Required]
+        public int CustomerId { get; set; }
+
+        // Navigation property to Customer
+        [ForeignKey("CustomerId")]
+        public CustomerModel Customer { get; set; }
 
         public virtual ICollection<OrderItem> Items { get; set; } = new List<OrderItem>();
     }
@@ -56,6 +64,9 @@ namespace RiceLinkAPI.Models.Orders
         public int OrderId { get; set; }
 
         [Required]
+        public int CustomerId { get; set; }
+
+        [Required]
         [DataType(DataType.Date)]
         public DateTime OrderDate { get; set; }
 
@@ -87,6 +98,9 @@ namespace RiceLinkAPI.Models.Orders
     {
         [Required]
         public int OrderId { get; set; }
+
+        [Required]
+        public int CustomerId { get; set; }
 
         [DataType(DataType.Date)]
         public DateTime? OrderDate { get; set; }
