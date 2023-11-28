@@ -17,6 +17,7 @@ namespace RiceLinkAPI.Models
         public DbSet<Product> Products { get; set; }
         public DbSet<Order> Orders { get; set; }
         public DbSet<CustomerModel> CustomerModel { get; set; }
+        public DbSet<OrderItem> OrderItem { get; set; }
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);

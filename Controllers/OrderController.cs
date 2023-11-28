@@ -38,6 +38,7 @@ namespace RiceLinkAPI.Controllers
                 TotalPrice = o.TotalPrice,
                 Items = o.Items.Select(i => new OrderItemDto
                 {
+                    Id = i.Id,
                     ProductId = i.ProductId,
                     Quantity = i.Quantity,
                     UnitPrice = i.UnitPrice
@@ -70,6 +71,7 @@ namespace RiceLinkAPI.Controllers
                 TotalPrice = order.TotalPrice,
                 Items = order.Items.Select(i => new OrderItemDto
                 {
+                    Id = i.Id,
                     ProductId = i.ProductId,
                     Quantity = i.Quantity,
                     UnitPrice = i.UnitPrice
@@ -94,6 +96,7 @@ namespace RiceLinkAPI.Controllers
             {
                 try
                 {
+                    List<OrderItem> orderItems = new List<OrderItem>();
                     foreach (var item in orderModel.Items)
                     {
                         var product = await _context.Products
@@ -112,6 +115,14 @@ namespace RiceLinkAPI.Controllers
 
                         // Deduct the quantity from the product
                         product.Quantity -= item.Quantity;
+
+                        var orderItem = new OrderItem
+                        {
+                            ProductId = item.ProductId,
+                            Quantity = item.Quantity,
+                            UnitPrice = product.Price
+                        };
+                        orderItems.Add(orderItem);
                     }
 
                     var newOrder = new Order
@@ -119,20 +130,14 @@ namespace RiceLinkAPI.Controllers
                         CustomerId = orderModel.CustomerId,
                         OrderDate = orderModel.OrderDate,
                         Status = "Reserved",
-                        Items = orderModel.Items.Select(i => new OrderItem
-                        {
-                            ProductId = i.ProductId,
-                            Quantity = i.Quantity,
-                            UnitPrice = _context.Products.Find(i.ProductId).Price
-                        }).ToList()
+                        Items = orderItems,
+                        TotalPrice = orderItems.Sum(i => i.UnitPrice * i.Quantity)
                     };
-
-                    newOrder.TotalPrice = newOrder.Items.Sum(i => i.UnitPrice * i.Quantity);
 
                     _context.Orders.Add(newOrder);
                     await _context.SaveChangesAsync();
 
-                    // Map the newly created Order entity to OrderDto
+                    // The IDs should be updated after SaveChangesAsync
                     var orderDto = new OrderDto
                     {
                         OrderId = newOrder.OrderId,
@@ -141,6 +146,7 @@ namespace RiceLinkAPI.Controllers
                         TotalPrice = newOrder.TotalPrice,
                         Items = newOrder.Items.Select(i => new OrderItemDto
                         {
+                            Id = i.Id,
                             ProductId = i.ProductId,
                             Quantity = i.Quantity,
                             UnitPrice = i.UnitPrice
@@ -157,7 +163,7 @@ namespace RiceLinkAPI.Controllers
                     return BadRequest(ex.Message);
                 }
             }
-        } //End CreateOrder
+        }//End CreateOrder
 
         // PUT: api/Order
         [HttpPut]
@@ -228,6 +234,7 @@ namespace RiceLinkAPI.Controllers
                         TotalPrice = order.TotalPrice,
                         Items = order.Items.Select(i => new OrderItemDto
                         {
+                            Id = i.Id,
                             ProductId = i.ProductId,
                             Quantity = i.Quantity,
                             UnitPrice = i.UnitPrice
@@ -323,6 +330,7 @@ namespace RiceLinkAPI.Controllers
                         TotalPrice = order.TotalPrice,
                         Items = order.Items.Select(i => new OrderItemDto
                         {
+                            Id = i.Id,
                             ProductId = i.ProductId,
                             Quantity = i.Quantity,
                             UnitPrice = i.UnitPrice
@@ -341,42 +349,61 @@ namespace RiceLinkAPI.Controllers
             }
         }//End PatchOrder
 
-        // DELETE: api/Order?orderId=5001
+        // DELETE: api/Order?orderId=2&itemId=1 (itemId is optional)
         [HttpDelete]
-        public async Task<ActionResult> DeleteOrder([FromQuery] int id)
+        public async Task<ActionResult> DeleteOrder([FromQuery] int orderId, [FromQuery] int? itemId = null)
         {
             using (var transaction = await _context.Database.BeginTransactionAsync())
             {
                 try
                 {
-                    var order = await _context.Orders
-                        .Include(o => o.Items)
-                        .FirstOrDefaultAsync(o => o.OrderId == id);
-
+                    var order = await _context.Orders.Include(o => o.Items).FirstOrDefaultAsync(o => o.OrderId == orderId);
                     if (order == null)
                     {
                         return NotFound("Order not found");
                     }
 
-                    if (order.Status == "Reserved")
+                    if (itemId.HasValue)
                     {
-                        // Revert the product quantities
-                        foreach (var item in order.Items)
+                        var itemToDelete = order.Items.FirstOrDefault(i => i.Id == itemId.Value);
+                        if (itemToDelete == null)
                         {
-                            var product = await _context.Products.FindAsync(item.ProductId);
+                            return NotFound($"Order item with ID {itemId.Value} not found in order {orderId}.");
+                        }
+
+                        // If the order is "Reserved", adjust the product quantity
+                        if (order.Status == "Reserved")
+                        {
+                            var product = await _context.Products.FindAsync(itemToDelete.ProductId);
                             if (product != null)
                             {
-                                product.Quantity += item.Quantity;
+                                product.Quantity += itemToDelete.Quantity;
                             }
                         }
+
+                        _context.OrderItem.Remove(itemToDelete); 
+                    }
+                    else
+                    {
+                        // Revert quantities and delete the order if it's "Reserved"
+                        if (order.Status == "Reserved")
+                        {
+                            foreach (var item in order.Items)
+                            {
+                                var product = await _context.Products.FindAsync(item.ProductId);
+                                if (product != null)
+                                {
+                                    product.Quantity += item.Quantity;
+                                }
+                            }
+                        }
+                        _context.Orders.Remove(order);
                     }
 
-                    _context.Orders.Remove(order);
                     await _context.SaveChangesAsync();
                     await transaction.CommitAsync();
 
-                    // Return a simple confirmation message or the ID of the deleted order
-                    return Ok(new { message = $"Order with ID {id} has been deleted." });
+                    return Ok(new { message = itemId.HasValue ? $"Order item with ID {itemId.Value} deleted from order {orderId}." : $"Order {orderId} deleted." });
                 }
                 catch (Exception ex)
                 {
@@ -385,7 +412,6 @@ namespace RiceLinkAPI.Controllers
                 }
             }
         }//End DeleteOrder
-
 
     }//End of Controller 
 }
